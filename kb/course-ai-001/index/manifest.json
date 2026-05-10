@@ -1,0 +1,16 @@
+{
+  "course_id": "course-ai-001",
+  "chunk_count": 27,
+  "chunk_size": 500,
+  "overlap": 125,
+  "embedding_model": "BAAI/bge-m3",
+  "dense_dim": 1024,
+  "sparse": true,
+  "documents": {
+    "ch01_绪论": "2ea7044cfa79fc201c0829c139dfb81b0f70a6923efe20a67eb8c0003557966a",
+    "ch02_搜索算法": "a0a8949cd7bd1a981beb8a1b3e4f0e1a515bc93205e0c179909e3903f8d8cb82",
+    "ch03_贝叶斯分类器": "7bdfe180eec7df5eef261274a13b8f0e88580a3acead19e9bca5b52f7482556b",
+    "exercises_贝叶斯练习": "f8e0019382db2413a41201c12fb6b78b918473b1af0bed1e8adca9e9b31cf5ac",
+    "glossary_术语表": "1e7d1bffb4dc31aab6bbc3f2b37d8a3ef53b9e5f7261f9e2a6bc784cbb3c3ef7"
+  }
+}
