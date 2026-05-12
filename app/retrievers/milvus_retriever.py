@@ -97,6 +97,9 @@ def _make_schema() -> CollectionSchema:
 def collection_exists(course_id: str) -> bool:
     _ensure_connected()
     client_uri = settings.milvus_uri or f"http://{settings.milvus_host}:{settings.milvus_port}"
+    # Add db_name to URI if using Milvus Standalone
+    if not settings.milvus_uri and settings.milvus_db:
+        client_uri += f"/{settings.milvus_db}"
     client = MilvusClient(uri=client_uri)
     return client.has_collection(_collection_name(course_id))
 
