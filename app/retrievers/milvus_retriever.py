@@ -243,6 +243,8 @@ def _hybrid_search(
 
     # Normalise each score set to [0, 1] via min-max
     def _normalise(scores: list[float]) -> list[float]:
+        if not scores:
+            return []
         mn, mx = min(scores), max(scores)
         if mx - mn < 1e-9:
             return [0.5] * len(scores)
@@ -313,17 +315,24 @@ def retrieve(
         expr = f'topic == "{escaped}"'
 
     try:
+        logger.info("Starting %s search for course=%s query='%s' k=%d", mode, course_id, query[:80], k)
+        
         if mode == "dense":
             query_vec = encode_query(query)
             hits = _dense_search(col, query_vec, k, expr)
+            logger.info("Dense search returned %d hits for course=%s", len(hits), course_id)
 
         elif mode == "sparse":
             query_sparse = encode_query_sparse(query)
             hits = _sparse_search(col, query_sparse, k, expr)
+            logger.info("Sparse search returned %d hits for course=%s", len(hits), course_id)
 
         else:  # hybrid
             query_dense, query_sparse = encode_query_hybrid(query)
+            logger.debug("Hybrid search params: alpha=%.2f, dense_dim=%d, sparse_nonzero=%d", 
+                        alpha, len(query_dense), len(query_sparse))
             hits = _hybrid_search(col, query_dense, query_sparse, k, expr, alpha)
+            logger.info("Hybrid search returned %d hits for course=%s", len(hits), course_id)
 
     except MilvusException as e:
         if "timeout" in str(e).lower():
