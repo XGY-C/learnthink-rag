@@ -33,32 +33,47 @@ def _collection_name(course_id: str) -> str:
 
 def connect() -> None:
     global _connected
-    try:
-        if settings.milvus_uri:
-            # Milvus Lite embedded mode (zero-dependency local dev)
-            connections.connect(alias="default", uri=settings.milvus_uri)
-            _connected = True
-            logger.info("Milvus Lite connected: %s", settings.milvus_uri)
-        else:
-            # Connect to Milvus Standalone
-            # Note: Database will be auto-created on first use in Milvus 2.4+
-            connections.connect(
-                alias="default",
-                host=settings.milvus_host,
-                port=settings.milvus_port,
-                db_name=settings.milvus_db if settings.milvus_db else "default",
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            if settings.milvus_uri:
+                # Milvus Lite embedded mode (zero-dependency local dev)
+                connections.connect(alias="default", uri=settings.milvus_uri)
+                _connected = True
+                logger.info("Milvus Lite connected: %s", settings.milvus_uri)
+                return
+            else:
+                # Connect to Milvus Standalone
+                # Note: Database will be auto-created on first use in Milvus 2.4+
+                connections.connect(
+                    alias="default",
+                    host=settings.milvus_host,
+                    port=settings.milvus_port,
+                    db_name=settings.milvus_db if settings.milvus_db else "default",
+                )
+                _connected = True
+                logger.info(
+                    "Milvus connected: %s:%s/%s",
+                    settings.milvus_host, settings.milvus_port, 
+                    settings.milvus_db if settings.milvus_db else "default"
+                )
+                return
+        except Exception as e:
+            _connected = False
+            logger.warning(
+                "Milvus connection attempt %d/%d failed: %s", 
+                attempt, max_retries, e
             )
-            _connected = True
-            logger.info(
-                "Milvus connected: %s:%s/%s",
-                settings.milvus_host, settings.milvus_port, 
-                settings.milvus_db if settings.milvus_db else "default"
-            )
-    except Exception as e:
-        _connected = False
-        logger.warning(
-            "Milvus connection failed: %s. Service will return 503 on requests.", e
-        )
+            if attempt < max_retries:
+                import time
+                time.sleep(retry_delay)
+            else:
+                logger.error(
+                    "Milvus connection failed after %d attempts: %s. Service will return 503 on requests.", 
+                    max_retries, e
+                )
 
 
 def disconnect() -> None:
@@ -71,7 +86,10 @@ def disconnect() -> None:
 
 def _ensure_connected():
     if not _connected:
-        raise ConnectionError("Milvus not connected")
+        logger.warning("Milvus connection lost or not initialized. Attempting to reconnect...")
+        connect()
+        if not _connected:
+            raise ConnectionError("Milvus not connected after retry")
 
 
 # ---------------------------------------------------------------------------
