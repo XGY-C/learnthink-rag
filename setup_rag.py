@@ -114,17 +114,7 @@ def main():
                         help="课程 ID，对应 kb/{course_id}/processed/")
     parser.add_argument("--skip-test", action="store_true",
                         help="跳过检索验证")
-    parser.add_argument("--jsonl", action="store_true",
-                        help="使用 JSONL fallback 模式（无需 Milvus）")
     args = parser.parse_args()
-
-    if args.jsonl:
-        from scripts.build_index import build_jsonl
-        kb_base = Path(settings.kb_base_dir).resolve()
-        check_docs(kb_base, args.course_id)
-        out = build_jsonl(kb_base, args.course_id, 500, 125)
-        logger.info("✅ JSONL 索引构建完成: %s", out)
-        return
 
     build_index(args.course_id)
 

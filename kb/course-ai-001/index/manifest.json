@@ -1,16 +1,28 @@
 {
   "course_id": "course-ai-001",
-  "chunk_count": 27,
-  "chunk_size": 500,
-  "overlap": 125,
+  "chunk_count": 221,
+  "chunk_size": 800,
+  "overlap": 200,
   "embedding_model": "BAAI/bge-m3",
   "dense_dim": 1024,
   "sparse": true,
   "documents": {
-    "ch01_绪论": "2ea7044cfa79fc201c0829c139dfb81b0f70a6923efe20a67eb8c0003557966a",
-    "ch02_搜索算法": "a0a8949cd7bd1a981beb8a1b3e4f0e1a515bc93205e0c179909e3903f8d8cb82",
-    "ch03_贝叶斯分类器": "7bdfe180eec7df5eef261274a13b8f0e88580a3acead19e9bca5b52f7482556b",
+    "ch01_绪论": "ee8a6c09b401b887cd1c5ff93d5fd9238fafe301288bae63ae102ac822c4a445",
+    "ch02_搜索算法": "3f64f5f59ccf739f01cac6515ffc0e604d18265c6c281810aa156e917bebd41a",
+    "ch03_贝叶斯分类器": "3ab16a0112fe528e98bdd95fb11da526885fa53951108ae64208f1e35b1b15c8",
+    "ch04_决策树与随机森林": "16120b9d23cae76adc79c6a3b2a6886838cf5b70c3dc368a3338a5a1a1d451cb",
+    "ch05_支持向量机": "c92ff8fae2176ee8e39c2c620b575539dbb58577c2c76e0815b58df1ff257a5e",
+    "ch06_神经网络基础": "b2af31422bbc20746b93a011f6236c05a5b0e7cfbba02330d570e3bffd605c2f",
+    "ch07_卷积神经网络": "e37f8408792f94747c530d38e0ed2e799d07d6d7d84516f6a411937c414fc3a5",
+    "ch08_循环神经网络": "550f7a6bde8741bc79d240abcb7c6866f8ad3098cad54e88b538b563987a9f5e",
+    "ch09_Transformer与大语言模型": "bd7c16f8ca10a6da9afc87548d1ee83de9ac094ab44a1a17966eddab3ef9afe3",
+    "ch10_强化学习": "04eaa064b89a5d8952d3085c8fc3bd67c3dc2f1ff47276ecf6146483328dbd2f",
+    "ch11_自然语言处理": "64b9fbb7751897910deff8d705b2c47defeb45ae4c97943742a54ee74a5859aa",
+    "exercises_综合练习": "31c8c723b605e56a03f01d1149e5238f040dac6842f6c511ca1ea786a412245f",
     "exercises_贝叶斯练习": "f8e0019382db2413a41201c12fb6b78b918473b1af0bed1e8adca9e9b31cf5ac",
-    "glossary_术语表": "1e7d1bffb4dc31aab6bbc3f2b37d8a3ef53b9e5f7261f9e2a6bc784cbb3c3ef7"
+    "glossary_完整术语表": "d8521684245a4e3d6692591e3491a6334b3bf92a9e01b544305b4f2572bb33d4",
+    "glossary_术语表": "1e7d1bffb4dc31aab6bbc3f2b37d8a3ef53b9e5f7261f9e2a6bc784cbb3c3ef7",
+    "projects_实践项目": "18c08f7bec5c8c234d397eb818850d1e5e8bd6d5de185ff2964a9eb5818d6a40",
+    "README_内容扩充说明": "185e296d48ead0b2fd79974dc441cf39bcba8e6d190d71f6cfe5843f296f0569"
   }
 }

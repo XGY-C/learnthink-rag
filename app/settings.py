@@ -11,11 +11,7 @@ class Settings(BaseSettings):
 
     # Knowledge base
     kb_base_dir: Path = Field(default=Path("../kb"), alias="KB_BASE_DIR")
-    index_filename: str = Field(default="chunks.jsonl", alias="INDEX_FILENAME")
     excerpt_max_chars: int = Field(default=320, alias="EXCERPT_MAX_CHARS")
-
-    # Retriever mode: "milvus" | "jsonl"
-    retriever_mode: str = Field(default="milvus", alias="RETRIEVER_MODE")
 
     # Milvus — 两种连接方式（二选一）
     # 方式 A: Milvus Lite 嵌入式（开发首选，零外部依赖）
