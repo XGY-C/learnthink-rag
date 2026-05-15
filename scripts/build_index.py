@@ -5,7 +5,12 @@ import hashlib
 import json
 import logging
 import re
+import sys
 from pathlib import Path
+
+# Add project root to sys.path for module imports
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -15,10 +20,19 @@ logger = logging.getLogger(__name__)
 # Chunking
 # ---------------------------------------------------------------------------
 def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """Paragraph-aware chunking: prefer splitting at paragraph boundaries."""
+    """Paragraph-aware chunking with semantic boundary detection.
+
+    Improvements over naive chunking:
+    - Raises minimum length from 80 → 150 chars (80 was too low for Chinese;
+      a chunk of just 80 chars often carries too little context).
+    - Tries to split at paragraph boundaries first, then sentence boundaries
+      within long paragraphs.
+    """
     text = text.strip()
     if not text:
         return []
+
+    MIN_CHUNK_LEN = 150  # was 80 — too many low-information chunks
 
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks: list[str] = []
@@ -31,13 +45,9 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
             if buffer:
                 chunks.append(buffer)
             if len(para) > chunk_size:
-                # Long paragraph: fall back to sliding window
-                step = max(1, chunk_size - overlap)
-                for start in range(0, len(para), step):
-                    end = min(len(para), start + chunk_size)
-                    chunk = para[start:end].strip()
-                    if chunk:
-                        chunks.append(chunk)
+                # Long paragraph: try sentence-boundary-aware splitting first
+                sentence_chunks = _split_long_paragraph(para, chunk_size, overlap)
+                chunks.extend(sentence_chunks)
                 buffer = ""
             else:
                 buffer = para
@@ -45,7 +55,58 @@ def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     if buffer:
         chunks.append(buffer)
 
-    return [c for c in chunks if len(c) >= 80]
+    return [c for c in chunks if len(c) >= MIN_CHUNK_LEN]
+
+
+def _split_long_paragraph(para: str, chunk_size: int, overlap: int) -> list[str]:
+    """Split a long paragraph at sentence boundaries when possible.
+
+    Falls back to character-level sliding window only when a single
+    sentence exceeds chunk_size.
+    """
+    import re as _re
+    # Split on Chinese/English sentence endings (expanded coverage)
+    # Added support for semicolons and colons which are common in technical writing
+    sentences = _re.split(r"(?<=[。！？；:;])\s*", para)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    if not sentences:
+        # Fallback: character-level sliding window
+        return _sliding_window_split(para, chunk_size, overlap)
+
+    chunks: list[str] = []
+    buffer = ""
+
+    for sent in sentences:
+        if len(buffer) + len(sent) <= chunk_size:
+            buffer = (buffer + sent).strip()
+        else:
+            if buffer:
+                chunks.append(buffer)
+            if len(sent) > chunk_size:
+                # Single sentence too long — fall back to sliding window
+                sub_chunks = _sliding_window_split(sent, chunk_size, overlap)
+                chunks.extend(sub_chunks)
+                buffer = ""
+            else:
+                buffer = sent
+
+    if buffer:
+        chunks.append(buffer)
+
+    return chunks
+
+
+def _sliding_window_split(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """Character-level sliding window split for text with no natural boundaries."""
+    step = max(1, chunk_size - overlap)
+    results: list[str] = []
+    for start in range(0, len(text), step):
+        end = min(len(text), start + chunk_size)
+        chunk = text[start:end].strip()
+        if chunk:
+            results.append(chunk)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +146,49 @@ def _extract_heading_path(text: str) -> str:
     return "/".join(headings) if headings else ""
 
 
+def _build_heading_map(text: str) -> list[tuple[int, str, int]]:
+    """Parse all Markdown headings in a document with their byte offsets.
+
+    Returns a list of (char_offset, title, level) sorted by offset.
+    Used to determine which heading each chunk belongs to.
+    """
+    heading_map: list[tuple[int, str, int]] = []
+    for m in re.finditer(r"^(#{1,4})\s+(.+)$", text, re.MULTILINE):
+        level = len(m.group(1))
+        title = m.group(2).strip()
+        heading_map.append((m.start(), title, level))
+    return heading_map
+
+
+def _heading_path_for_chunk(
+    chunk_start: int,
+    heading_map: list[tuple[int, str, int]],
+) -> str:
+    """Determine the heading breadcrumb for a chunk at `chunk_start` offset.
+
+    Walks the heading map to find the active heading stack at the chunk's
+    position, building a proper breadcrumb like:
+      "人工智能导论 / 第3章 贝叶斯分类器 / 3.2 实战代码"
+    instead of using the same static heading for all chunks.
+    """
+    if not heading_map:
+        return ""
+
+    # Find all headings that appear before chunk_start
+    active: list[tuple[int, str]] = []  # (level, title)
+    for offset, title, level in heading_map:
+        if offset > chunk_start:
+            break
+        # Pop headings at same or deeper level
+        while active and active[-1][0] >= level:
+            active.pop()
+        active.append((level, title))
+
+    if not active:
+        return ""
+    return "/".join(title for _, title in active)
+
+
 def _extract_topics(text: str) -> list[str]:
     """Extract potential topic keywords from early content + headings.
 
@@ -119,82 +223,119 @@ def _extract_topics(text: str) -> list[str]:
 
 
 def _assign_chunk_topic(chunk: str, doc_topics: list[str]) -> str:
-    """Assign a single best topic to a chunk based on keyword overlap."""
-    chunk_lower = chunk.lower()
+    """Assign a single best topic to a chunk based on keyword overlap.
+
+    Fixes from original implementation:
+    - Uses jieba word segmentation for Chinese text to avoid substring false positives.
+      ("人工智能" no longer matches "弱人工智能", "人工智能导论", etc.)
+    - Returns empty string instead of doc_topics[0] as fallback, because
+      forcing the first topic on unrelated chunks is metadata pollution.
+    - Picks the longest matching topic to prefer more specific matches.
+    - Requires at least 2 overlapping words for a match to reduce noise.
+    """
+    try:
+        import jieba
+    except ImportError:
+        # Fallback to simple substring matching if jieba not installed
+        logger.warning("jieba not installed, falling back to substring matching")
+        return _assign_chunk_topic_fallback(chunk, doc_topics)
+
+    chunk_words = set(jieba.cut(chunk))
+    
+    best_topic = ""
+    max_overlap = 0
+
     for topic in doc_topics:
-        if topic.lower() in chunk_lower:
-            return topic
-    return doc_topics[0] if doc_topics else ""
+        topic_words = set(jieba.cut(topic))
+        # Calculate word-level overlap
+        overlap = len(chunk_words & topic_words)
+        if overlap > max_overlap:
+            max_overlap = overlap
+            best_topic = topic
+
+    # Require at least 2 overlapping words to consider it a valid match
+    # This reduces false positives from common single-character words
+    if max_overlap >= 2:
+        return best_topic
+    return ""  # No forced fallback — empty is better than wrong
 
 
-# ---------------------------------------------------------------------------
-# JSONL builder (legacy / dry-run)
-# ---------------------------------------------------------------------------
-def build_jsonl(kb_base_dir: Path, course_id: str, chunk_size: int, overlap: int) -> Path:
-    """Build JSONL index (legacy / dry-run mode). Returns output file path."""
-    course_dir = kb_base_dir / course_id
-    processed_dir = course_dir / "processed"
-    index_dir = course_dir / "index"
-    index_dir.mkdir(parents=True, exist_ok=True)
+def _assign_chunk_topic_fallback(chunk: str, doc_topics: list[str]) -> str:
+    """Fallback topic assignment using substring matching (when jieba unavailable).
+    
+    This is less accurate but ensures the system works without jieba dependency.
+    """
+    import re as _re
+    chunk_lower = chunk.lower()
 
-    files = list(processed_dir.rglob("*.md")) + list(processed_dir.rglob("*.txt"))
-    out_file = index_dir / "chunks.jsonl"
+    # Find all matching topics, prefer the longest (most specific) match
+    matches: list[str] = []
+    for topic in doc_topics:
+        topic_lower = topic.lower()
+        pattern = _re.escape(topic_lower)
+        if _re.search(pattern, chunk_lower):
+            matches.append(topic)
 
-    with out_file.open("w", encoding="utf-8") as out:
-        if not files:
-            placeholder = {
-                "chunk_id": "placeholder#0",
-                "doc_id": "placeholder",
-                "doc_title": "占位材料（请在 kb/<course_id>/processed/ 放入文档后重建索引）",
-                "source_type": "讲义",
-                "text": "这是一个占位 chunk，用于联调 /internal/rag/retrieve。",
-                "locator": "",
-                "heading_path": "",
-                "topic": "",
-            }
-            out.write(json.dumps(placeholder, ensure_ascii=False) + "\n")
-            logger.info("Wrote placeholder index: %s", out_file)
-            return out_file
-
-        chunk_id_counter = 0
-        for file_path in sorted(files):
-            text = file_path.read_text(encoding="utf-8", errors="ignore")
-            source_type = _detect_source_type(file_path)
-            doc_id = file_path.stem
-            heading_path = _extract_heading_path(text)
-            doc_topics = _extract_topics(text)
-            parts = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
-
-            for i, part in enumerate(parts):
-                topic = _assign_chunk_topic(part, doc_topics)
-                obj = {
-                    "chunk_id": f"{doc_id}#{i}",
-                    "doc_id": doc_id,
-                    "doc_title": doc_id,
-                    "source_type": source_type,
-                    "text": part,
-                    "locator": "",
-                    "heading_path": heading_path,
-                    "topic": topic,
-                }
-                out.write(json.dumps(obj, ensure_ascii=False) + "\n")
-                chunk_id_counter += 1
-
-    logger.info("Wrote %d chunks to %s", chunk_id_counter, out_file)
-    return out_file
-
+    if matches:
+        # Return the longest matching topic (most specific)
+        return max(matches, key=len)
+    return ""
 
 # ---------------------------------------------------------------------------
 # Milvus builder
 # ---------------------------------------------------------------------------
-def build_milvus(kb_base_dir: Path, course_id: str, chunk_size: int, overlap: int) -> None:
+def _load_manifest(index_dir: Path) -> dict | None:
+    """Load the previous build manifest if it exists."""
+    manifest_file = index_dir / "manifest.json"
+    if manifest_file.exists():
+        try:
+            return json.loads(manifest_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load manifest: %s", e)
+    return None
+
+
+def _compute_chunk_offsets(text: str, chunks: list[str]) -> list[int]:
+    """Compute the character offset of each chunk within the original text.
+
+    Used to determine which heading section each chunk belongs to.
+    Returns a list of offsets (one per chunk).
+    """
+    offsets: list[int] = []
+    search_start = 0
+    for chunk in chunks:
+        key = chunk[:50].strip()
+        pos = text.find(key, search_start)
+        if pos >= 0:
+            offsets.append(pos)
+            search_start = pos + len(key)
+        else:
+            offsets.append(search_start)
+    return offsets
+
+
+def build_milvus(
+    kb_base_dir: Path,
+    course_id: str,
+    chunk_size: int,
+    overlap: int,
+    full_rebuild: bool = False,
+) -> None:
     """Build Milvus collection from processed documents.
+
+    Supports incremental indexing:
+    - Reads the previous manifest to get document hashes.
+    - Only re-encodes documents whose hash has changed.
+    - Deletes stale chunks for changed/deleted documents before re-inserting.
+    - Use --full-rebuild to force a complete rebuild.
 
     Encodes both dense (1024-d) and sparse (BGE-M3 lexical weights) vectors,
     and writes topic metadata for content-aware filtering.
     """
     from app.embedding import encode_documents_with_sparse
-    from app.retrievers.milvus_retriever import get_or_create_collection
+    from app.retrievers.milvus_retriever import get_or_create_collection, _collection_name
+    from app.settings import settings
+    from pymilvus import MilvusClient
 
     course_dir = kb_base_dir / course_id
     processed_dir = course_dir / "processed"
@@ -202,46 +343,102 @@ def build_milvus(kb_base_dir: Path, course_id: str, chunk_size: int, overlap: in
     index_dir.mkdir(parents=True, exist_ok=True)
 
     files = list(processed_dir.rglob("*.md")) + list(processed_dir.rglob("*.txt"))
-
-    from pymilvus import utility
 
     if not files:
         logger.warning("No documents found in %s. Creating empty collection.", processed_dir)
         get_or_create_collection(course_id)
         return
 
-    # Full rebuild: drop existing → recreate → insert
-    col_name = f"kb_{course_id}".replace("-", "_")
-    
-    # Use MilvusClient to check collection existence (avoids database context issues)
-    from app.settings import settings
+    # ---- Incremental indexing logic ----
+    prev_manifest = _load_manifest(index_dir) if not full_rebuild else None
+    prev_hashes: dict[str, str] = prev_manifest.get("documents", {}) if prev_manifest else {}
+
+    # Compute current hashes and determine changed/unchanged/deleted docs
+    current_hashes: dict[str, str] = {}
+    files_to_process: list[Path] = []
+    skipped_count = 0
+
+    for file_path in sorted(files):
+        doc_id = file_path.stem
+        doc_hash = _hash_file(file_path)
+        current_hashes[doc_id] = doc_hash
+        if doc_id in prev_hashes and prev_hashes[doc_id] == doc_hash:
+            skipped_count += 1
+            continue  # Document unchanged -- skip re-encoding
+        files_to_process.append(file_path)
+
+    # Detect deleted documents (in prev but not in current)
+    deleted_doc_ids = set(prev_hashes.keys()) - set(current_hashes.keys())
+
+    # Create MilvusClient for collection management (fixes undefined 'client' bug)
     client_uri = settings.milvus_uri or f"http://{settings.milvus_host}:{settings.milvus_port}"
-    from pymilvus import MilvusClient
+    if not settings.milvus_uri and settings.milvus_db:
+        client_uri += f"/{settings.milvus_db}"
     client = MilvusClient(uri=client_uri)
-    
-    if client.has_collection(col_name):
-        client.drop_collection(col_name)
-        logger.info("Dropped existing collection: %s", col_name)
+    col_name = _collection_name(course_id)
+
+    is_incremental = (
+        prev_manifest is not None
+        and client.has_collection(col_name)
+        and (skipped_count > 0 or deleted_doc_ids)
+    )
+
+    if is_incremental and files_to_process:
+        logger.info(
+            "Incremental build: %d unchanged, %d changed/new, %d deleted",
+            skipped_count, len(files_to_process), len(deleted_doc_ids),
+        )
+    elif is_incremental and not files_to_process and not deleted_doc_ids:
+        logger.info("No document changes detected. Skipping build.")
+        return
+    else:
+        # Full rebuild path
+        is_incremental = False
+        if client.has_collection(col_name):
+            client.drop_collection(col_name)
+            logger.info("Dropped existing collection: %s", col_name)
+
     col = get_or_create_collection(course_id)
+
+    # ---- Delete stale chunks for changed/deleted documents ----
+    if is_incremental and (files_to_process or deleted_doc_ids):
+        docs_to_delete = set()
+        for f in files_to_process:
+            docs_to_delete.add(f.stem)
+        docs_to_delete.update(deleted_doc_ids)
+        doc_list = sorted(docs_to_delete)
+        DEL_BATCH = 50
+        for i in range(0, len(doc_list), DEL_BATCH):
+            batch = doc_list[i:i + DEL_BATCH]
+            expr_parts = [f'doc_id == "{d}"' for d in batch]
+            col.delete(expr=" || ".join(expr_parts))
+            logger.info("Deleted stale chunks for docs: %s", batch)
+        col.flush()
+
+    # ---- Process changed/new documents ----
 
     all_entities: list[dict] = []
     chunk_id_counter = 0
-    doc_hashes: dict[str, str] = {}
-    batch_size = 32  # encode in batches to manage memory
+    batch_size = 5  # encode in smaller batches to see progress faster
+    total_files = len(files_to_process)
+    logger.info("Starting to process %d documents...", total_files)
 
-    for file_path in sorted(files):
+    for file_idx, file_path in enumerate(files_to_process, 1):
+        logger.info("Processing document %d/%d: %s", file_idx, total_files, file_path.name)
         text = file_path.read_text(encoding="utf-8", errors="ignore")
         source_type = _detect_source_type(file_path)
         doc_id = file_path.stem
-        doc_hash = _hash_file(file_path)
-        doc_hashes[doc_id] = doc_hash
 
-        heading_path = _extract_heading_path(text)
+        # Build heading map for per-chunk heading_path (fixes static heading bug)
+        heading_map = _build_heading_map(text)
         doc_topics = _extract_topics(text)
 
         parts = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
         if not parts:
+            logger.info("  No chunks generated for %s", file_path.name)
             continue
+
+        logger.info("  Generated %d chunks, encoding...", len(parts))
 
         # Batch-encode for efficiency
         dense_list: list[list[float]] = []
@@ -252,21 +449,32 @@ def build_milvus(kb_base_dir: Path, course_id: str, chunk_size: int, overlap: in
             dense_list.extend(d)
             sparse_list.extend(s)
 
+        logger.info("  Encoding complete, building entities...")
+
+        # Compute chunk offsets for heading lookup
+        chunk_offsets = _compute_chunk_offsets(text, parts)
+
         for i, part in enumerate(parts):
             topic = _assign_chunk_topic(part, doc_topics)
+            # Per-chunk heading path instead of static document-level heading
+            chunk_heading = _heading_path_for_chunk(
+                chunk_offsets[i] if i < len(chunk_offsets) else 0, heading_map
+            )
             all_entities.append({
                 "chunk_id": f"{doc_id}#{i}",
                 "doc_id": doc_id,
                 "doc_title": doc_id,
                 "source_type": source_type,
                 "text": part,
-                "heading_path": heading_path,
+                "heading_path": chunk_heading,
                 "locator": "",
                 "topic": topic,
                 "embedding": dense_list[i],
                 "sparse_vector": sparse_list[i],
             })
             chunk_id_counter += 1
+
+        logger.info("  Document %d/%d completed (%d chunks so far)", file_idx, total_files, chunk_id_counter)
 
     if all_entities:
         # Insert in batches to avoid gRPC message size limits
@@ -289,7 +497,7 @@ def build_milvus(kb_base_dir: Path, course_id: str, chunk_size: int, overlap: in
         "embedding_model": "BAAI/bge-m3",
         "dense_dim": DIM,
         "sparse": True,
-        "documents": doc_hashes,
+        "documents": current_hashes,
     }
     manifest_file = index_dir / "manifest.json"
     manifest_file.write_text(
@@ -308,25 +516,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build RAG index for learnthink-rag.")
     parser.add_argument("--course-id", required=True)
     parser.add_argument("--kb-base-dir", default="kb")
-    parser.add_argument("--chunk-size", type=int, default=500)
-    parser.add_argument("--overlap", type=int, default=125)
-    parser.add_argument(
-        "--mode", choices=["jsonl", "milvus"], default="milvus",
-        help="Index backend: milvus (default) or jsonl (legacy)",
-    )
+    parser.add_argument("--chunk-size", type=int, default=800, 
+                        help="Chunk size in characters (default: 800, increased from 500 for better context)")
+    parser.add_argument("--overlap", type=int, default=200,
+                        help="Overlap between chunks in characters (default: 200, 25% of chunk_size)")
+    parser.add_argument("--full-rebuild", action="store_true",
+                        help="Force full rebuild instead of incremental indexing")
 
     args = parser.parse_args()
 
     kb_base_dir = Path(args.kb_base_dir).resolve()
     logger.info(
-        "Building index: course=%s, mode=%s, chunk_size=%d, overlap=%d",
-        args.course_id, args.mode, args.chunk_size, args.overlap,
+        "Building Milvus index: course=%s, chunk_size=%d, overlap=%d, full_rebuild=%s",
+        args.course_id, args.chunk_size, args.overlap, args.full_rebuild,
     )
 
-    if args.mode == "jsonl":
-        build_jsonl(kb_base_dir, args.course_id, args.chunk_size, args.overlap)
-    else:
-        build_milvus(kb_base_dir, args.course_id, args.chunk_size, args.overlap)
+    build_milvus(kb_base_dir, args.course_id, args.chunk_size, args.overlap,
+                 full_rebuild=args.full_rebuild)
 
 
 if __name__ == "__main__":

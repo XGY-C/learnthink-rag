@@ -7,7 +7,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 
-from app.retrievers.file_retriever import FileIndexRetriever
 from app.retrievers.milvus_retriever import (
     collection_exists,
     connect,
@@ -27,20 +26,20 @@ logger = logging.getLogger("learnthink-rag")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # === STARTUP ===
-    if settings.retriever_mode == "milvus":
-        try:
-            connect()
-            from app.embedding import warmup
-            warmup()
-            logger.info("learnthink-rag started, mode=milvus, dim=1024")
-        except Exception as e:
-            logger.warning("learnthink-rag started with warnings, mode=milvus: %s", e)
-    else:
-        logger.info("learnthink-rag started, mode=jsonl (fallback)")
+    try:
+        connect()
+        from app.embedding import warmup
+        warmup()
+        # Warmup reranker model
+        from app.reranker import warmup_reranker
+        warmup_reranker()
+        logger.info("learnthink-rag started, Milvus mode enabled with reranker")
+    except Exception as e:
+        logger.error("learnthink-rag startup failed: %s", e)
+        raise
     yield
     # === SHUTDOWN ===
-    if settings.retriever_mode == "milvus":
-        disconnect()
+    disconnect()
     logger.info("learnthink-rag stopped")
 
 
@@ -49,77 +48,66 @@ app = FastAPI(title="learnthink-rag", version="0.2.0", lifespan=lifespan)
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"status": "ok", "retriever_mode": settings.retriever_mode}
-
-
-def _resolve_index_file(course_id: str) -> Path:
-    base = settings.kb_base_dir
-    index_dir = (base / course_id / "index").resolve()
-    return index_dir / settings.index_filename
+    return {"status": "ok", "mode": "milvus"}
 
 
 @app.post("/internal/rag/retrieve", response_model=RetrieveResponse)
 def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     t0 = time.time()
 
-    if settings.retriever_mode == "milvus":
-        if not collection_exists(req.course_id):
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "KB_NOT_READY",
-                    "message": "知识库未就绪：Milvus Collection 不存在或索引未建立",
-                    "course_id": req.course_id,
-                    "extra": {},
-                },
-            )
-        try:
-            sources = milvus_retrieve(
-                course_id=req.course_id,
-                query=req.query,
-                k=req.k,
-                topic=req.topic,
-                search_mode=req.search_mode,
-                alpha=1.0 - req.sparse_weight,
-            )
-        except TimeoutError as e:
-            elapsed_ms = (time.time() - t0) * 1000
-            logger.error("retrieval timeout course=%s elapsed=%.0fms", req.course_id, elapsed_ms)
-            raise HTTPException(
-                status_code=504,
-                detail={
-                    "code": "RETRIEVAL_TIMEOUT",
-                    "message": "检索超时，请稍后重试",
-                    "course_id": req.course_id,
-                    "extra": {"timeout_ms": 2000},
-                },
-            )
-        except Exception as e:
-            elapsed_ms = (time.time() - t0) * 1000
-            logger.error("milvus error course=%s: %s", req.course_id, e)
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "code": "MILVUS_ERROR",
-                    "message": f"Milvus 检索异常: {str(e)[:200]}",
-                    "course_id": req.course_id,
-                    "extra": {"error": str(e)[:200]},
-                },
-            )
-    else:
-        index_file = _resolve_index_file(req.course_id)
-        if not index_file.exists():
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "KB_NOT_READY",
-                    "message": "知识库未就绪：索引文件不存在",
-                    "course_id": req.course_id,
-                    "extra": {"expected_index": str(index_file)},
-                },
-            )
-        retriever = FileIndexRetriever(index_file=index_file, excerpt_max_chars=settings.excerpt_max_chars)
-        sources = retriever.retrieve(query=req.query, k=req.k)
+    if not collection_exists(req.course_id):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "KB_NOT_READY",
+                "message": "知识库未就绪：Milvus Collection 不存在或索引未建立",
+                "course_id": req.course_id,
+                "extra": {},
+            },
+        )
+    try:
+        sources = milvus_retrieve(
+            course_id=req.course_id,
+            query=req.query,
+            k=req.k,
+            topic=req.topic,
+            search_mode=req.search_mode,
+            alpha=1.0 - req.sparse_weight,
+        )
+        
+        # Apply min_relevance filter as per API contract
+        if req.min_relevance > 0:
+            filtered_sources = [s for s in sources if s['relevance'] >= req.min_relevance]
+            if len(filtered_sources) < len(sources):
+                logger.info(
+                    "Filtered %d sources by min_relevance=%.2f, %d remaining",
+                    len(sources), req.min_relevance, len(filtered_sources)
+                )
+            sources = filtered_sources
+    except TimeoutError as e:
+        elapsed_ms = (time.time() - t0) * 1000
+        logger.error("retrieval timeout course=%s elapsed=%.0fms", req.course_id, elapsed_ms)
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "RETRIEVAL_TIMEOUT",
+                "message": "检索超时，请稍后重试",
+                "course_id": req.course_id,
+                "extra": {"timeout_ms": 2000},
+            },
+        )
+    except Exception as e:
+        elapsed_ms = (time.time() - t0) * 1000
+        logger.error("milvus error course=%s: %s", req.course_id, e)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "MILVUS_ERROR",
+                "message": f"Milvus 检索异常: {str(e)[:200]}",
+                "course_id": req.course_id,
+                "extra": {"error": str(e)[:200]},
+            },
+        )
 
     stats = RetrieveStats(
         k=req.k,
@@ -127,13 +115,14 @@ def retrieve(req: RetrieveRequest) -> RetrieveResponse:
         min_relevance=req.min_relevance,
         min_sources=req.min_sources,
         query_mode=req.query_mode,
+        search_mode=req.search_mode,
         deduped=True,
     )
 
     elapsed_ms = (time.time() - t0) * 1000
     logger.info(
-        "retrieve done course=%s k=%d returned=%d mode=%s elapsed=%.0fms",
-        req.course_id, req.k, len(sources), req.query_mode, elapsed_ms,
+        "retrieve done course=%s k=%d returned=%d search_mode=%s query_mode=%s elapsed=%.0fms",
+        req.course_id, req.k, len(sources), req.search_mode, req.query_mode, elapsed_ms,
     )
 
     return RetrieveResponse(sources=sources, stats=stats)
