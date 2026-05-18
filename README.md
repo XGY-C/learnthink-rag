@@ -1,11 +1,39 @@
 # learnthink-rag
 
-RAG 检索服务（FastAPI）。支持两种模式：
+RAG 检索微服务（FastAPI），为上层 Java 服务提供文档检索能力。
 
-- **Milvus**（默认）：向量检索，使用 BGE-M3 embedding + Milvus 2.4+
-- **JSONL**（fallback）：简单关键词打分，零外部依赖，仅用于紧急降级
+## 核心功能
 
-切换方式：`.env` 中 `RETRIEVER_MODE=milvus|jsonl`
+- **文档摄入**：从 OSS 同步 Markdown 文件，自动构建向量索引
+- **混合检索**：BGE-M3 稠密 + 稀疏双向量检索
+- **实时进度**：异步任务追踪，支持进度查询
+- **重排序**：BGE-Reranker 提升检索精度
+
+## 项目结构
+
+```
+learnthink-rag/
+├── app/                    # 应用代码
+│   ├── main.py            # FastAPI 主程序
+│   ├── schemas.py         # 数据模型
+│   ├── task_manager.py    # 任务管理器
+│   ├── task_executor.py   # 异步任务执行器
+│   ├── oss_client.py      # OSS 客户端
+│   └── retrievers/        # 检索器实现
+│
+├── scripts/                # 工具脚本
+│   ├── build_index.py     # 索引构建
+│   └── *.py               # 调试/检查脚本
+│
+├── tests/                  # 测试脚本
+├── examples/               # 示例代码
+├── docs/                   # 详细文档
+│
+├── kb/                     # 知识库数据
+├── models/                 # 模型缓存
+├── milvus_data/           # Milvus 数据
+└── eval/                   # 评估数据
+```
 
 ## 目录约定
 

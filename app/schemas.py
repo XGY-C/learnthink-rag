@@ -26,7 +26,10 @@ class RetrieveRequest(BaseModel):
 
 class SourceItem(BaseModel):
     doc_id: str
-    doc_title: str
+    book_title: str = ""
+    book_type: str = ""
+    chapter_index: int | None = None
+    chapter_title: str = ""
     source_type: str | None = None
 
     chunk_id: str
@@ -53,3 +56,35 @@ class RetrieveStats(BaseModel):
 class RetrieveResponse(BaseModel):
     sources: list[SourceItem]
     stats: RetrieveStats
+
+
+class IngestRequest(BaseModel):
+    """文档摄入请求 - Java端调用"""
+    course_id: str = Field(min_length=1, description="课程ID")
+    doc_ids: list[str] = Field(default_factory=list, description="需要更新的文档ID列表（不含扩展名），空则同步整个课程")
+    oss_prefix: str = Field(default="", description="OSS前缀，为空则使用默认路径")
+    full_rebuild: bool = Field(default=False, description="是否全量重建索引")
+    async_mode: bool = Field(default=True, description="是否异步执行（推荐true）")
+
+
+class IngestResponse(BaseModel):
+    """文档摄入响应"""
+    status: str
+    task_id: str
+    course_id: str
+    message: str
+
+
+class TaskProgress(BaseModel):
+    """任务进度信息"""
+    task_id: str
+    status: str  # pending, running, completed, failed
+    progress: float  # 0-100
+    current_step: str = ""  # 当前步骤描述
+    total_files: int = 0
+    processed_files: int = 0
+    total_chunks: int = 0
+    message: str = ""
+    error: str | None = None
+    created_at: float = 0
+    updated_at: float = 0
