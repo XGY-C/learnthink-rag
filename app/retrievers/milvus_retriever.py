@@ -113,7 +113,10 @@ def _make_schema() -> CollectionSchema:
     fields = [
         FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, is_primary=True, max_length=128),
         FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=64),
-        FieldSchema(name="doc_title", dtype=DataType.VARCHAR, max_length=256),
+        FieldSchema(name="book_title", dtype=DataType.VARCHAR, max_length=128),
+        FieldSchema(name="book_type", dtype=DataType.VARCHAR, max_length=32),
+        FieldSchema(name="chapter_index", dtype=DataType.INT64),
+        FieldSchema(name="chapter_title", dtype=DataType.VARCHAR, max_length=256),
         FieldSchema(name="source_type", dtype=DataType.VARCHAR, max_length=32),
         FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=4096),
         FieldSchema(name="heading_path", dtype=DataType.VARCHAR, max_length=512),
@@ -199,7 +202,7 @@ def _dense_search(
         param=search_params,
         limit=k,
         expr=expr,
-        output_fields=["doc_id", "doc_title", "source_type", "chunk_id",
+        output_fields=["doc_id", "book_title", "book_type", "chapter_index", "chapter_title", "source_type", "chunk_id",
                        "text", "locator", "heading_path"],
         timeout=3,
     )
@@ -223,7 +226,7 @@ def _sparse_search(
         param=search_params,
         limit=k,
         expr=expr,
-        output_fields=["doc_id", "doc_title", "source_type", "chunk_id",
+        output_fields=["doc_id", "book_title", "book_type", "chapter_index", "chapter_title", "source_type", "chunk_id",
                        "text", "locator", "heading_path"],
         timeout=3,
     )
@@ -436,7 +439,10 @@ def retrieve(
         text = str(entity.get("text", ""))
         sources.append({
             "doc_id": str(entity.get("doc_id", "")),
-            "doc_title": str(entity.get("doc_title", "")),
+            "book_title": str(entity.get("book_title", "")),
+            "book_type": entity.get("book_type"),
+            "chapter_index": entity.get("chapter_index"),
+            "chapter_title": str(entity.get("chapter_title", "")),
             "source_type": entity.get("source_type"),
             "chunk_id": chunk_id,
             "excerpt": _make_excerpt(text, EXCERPT_MAX_CHARS),
@@ -477,7 +483,10 @@ def retrieve(
                 text = str(entity.get("text", ""))
                 sources_rr.append({
                     "doc_id": str(entity.get("doc_id", "")),
-                    "doc_title": str(entity.get("doc_title", "")),
+                    "book_title": str(entity.get("book_title", "")),
+            "book_type": entity.get("book_type"),
+            "chapter_index": entity.get("chapter_index"),
+            "chapter_title": str(entity.get("chapter_title", "")),
                     "source_type": entity.get("source_type"),
                     "chunk_id": chunk_id,
                     "excerpt": _make_excerpt(text, EXCERPT_MAX_CHARS),

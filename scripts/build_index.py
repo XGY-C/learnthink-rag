@@ -12,8 +12,9 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+from app.log_config import setup_logger
+
+logger = setup_logger("build_index")
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +111,60 @@ def _sliding_window_split(text: str, chunk_size: int, overlap: int) -> list[str]
 
 
 # ---------------------------------------------------------------------------
+# Course metadata & chapter info extraction (v3.5)
+# ---------------------------------------------------------------------------
+def _load_course_meta(course_dir: Path) -> dict[str, tuple[str, str]]:
+    """Load course_meta.json and return a {prefix: (book_title, book_type)} map.
+
+    Expected JSON structure:
+      { "name": "...", "books": [{"prefix": "ch", "title": "...", "type": "..."}, ...] }
+
+    Returns empty dict if file missing or unparseable (build continues with defaults).
+    """
+    meta_file = course_dir / "course_meta.json"
+    if not meta_file.exists():
+        logger.info("No course_meta.json found at %s", meta_file)
+        return {}
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        books = meta.get("books", [])
+        result: dict[str, tuple[str, str]] = {}
+        for b in books:
+            prefix = b.get("prefix", "")
+            title = b.get("title", "")
+            btype = b.get("type", "unknown")
+            if prefix:
+                result[prefix] = (title, btype)
+        logger.info("Loaded course meta with %d book mappings", len(result))
+        return result
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to load course_meta.json: %s", e)
+        return {}
+
+
+def _parse_chapter_info(doc_id: str) -> tuple[int | None, str]:
+    """Extract chapter_index and chapter_title from a doc_id (filename stem).
+
+    Chapter files match pattern:  ch(\d+)_(.+)     → e.g. ch03_贝叶斯分类器
+    Non-chapter files (exercises, glossary, etc.):  prefix_descriptive_part
+
+    Returns: (chapter_index or None, chapter_title or "")
+    """
+    # Chapter files: ch03_贝叶斯分类器 → index=3, title="贝叶斯分类器"
+    m = re.match(r"^ch(\d+)_(.+)$", doc_id)
+    if m:
+        return int(m.group(1)), m.group(2).strip()
+
+    # Non-chapter files: extract descriptive part after first underscore
+    if "_" in doc_id:
+        parts = doc_id.split("_", 1)
+        desc = parts[1].strip() if len(parts) > 1 else ""
+        return None, desc
+
+    return None, ""
+
+
+# ---------------------------------------------------------------------------
 # Metadata extraction
 # ---------------------------------------------------------------------------
 def _hash_file(file_path: Path) -> str:
@@ -121,9 +176,13 @@ def _detect_source_type(file_path: Path) -> str:
     if any(kw in name for kw in ["讲义", "lecture", "chapter", "章"]):
         return "讲义"
     if any(kw in name for kw in ["题", "exercise", "quiz", "练习"]):
-        return "题库"
+        return "习题"
     if any(kw in name for kw in ["术语", "glossary", "词汇"]):
         return "术语"
+    if any(kw in name for kw in ["代码", "code", "程序", "示例"]):
+        return "代码"
+    if any(kw in name for kw in ["项目", "project", "实践"]):
+        return "项目"
     if any(kw in name for kw in ["阅读", "reading", "paper", "论文", "文献"]):
         return "阅读"
     return "讲义"
@@ -314,6 +373,9 @@ def _compute_chunk_offsets(text: str, chunks: list[str]) -> list[int]:
     return offsets
 
 
+DIM = 1024  # BGE-M3 dense dimension (moved up for use in build_milvus)
+
+
 def build_milvus(
     kb_base_dir: Path,
     course_id: str,
@@ -348,6 +410,9 @@ def build_milvus(
         logger.warning("No documents found in %s. Creating empty collection.", processed_dir)
         get_or_create_collection(course_id)
         return
+
+    # Load course metadata for book_title / book_type mapping
+    book_map = _load_course_meta(course_dir)
 
     # ---- Incremental indexing logic ----
     prev_manifest = _load_manifest(index_dir) if not full_rebuild else None
@@ -429,6 +494,18 @@ def build_milvus(
         source_type = _detect_source_type(file_path)
         doc_id = file_path.stem
 
+        # v3.5: Parse chapter info and book metadata
+        chapter_index, chapter_title = _parse_chapter_info(doc_id)
+        # Match filename prefix to course_meta book mapping
+        book_title = ""
+        book_type = "unknown"
+        if book_map:
+            for prefix, (bt, btype) in sorted(book_map.items(), key=lambda x: -len(x[0])):
+                if doc_id.startswith(prefix):
+                    book_title = bt
+                    book_type = btype
+                    break
+
         # Build heading map for per-chunk heading_path (fixes static heading bug)
         heading_map = _build_heading_map(text)
         doc_topics = _extract_topics(text)
@@ -463,7 +540,10 @@ def build_milvus(
             all_entities.append({
                 "chunk_id": f"{doc_id}#{i}",
                 "doc_id": doc_id,
-                "doc_title": doc_id,
+                "book_title": book_title,
+                "book_type": book_type,
+                "chapter_index": chapter_index if chapter_index is not None else -1,  # Use -1 for non-chapter documents
+                "chapter_title": chapter_title if chapter_title else "",
                 "source_type": source_type,
                 "text": part,
                 "heading_path": chunk_heading,
@@ -509,7 +589,6 @@ def build_milvus(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-DIM = 1024  # BGE-M3 dense dimension
 
 
 def main() -> None:
