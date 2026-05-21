@@ -1,0 +1,25 @@
+{
+  "name": "人工智能概论",
+  "books": [
+    {
+      "prefix": "ch",
+      "title": "人工智能导论",
+      "type": "教材"
+    },
+    {
+      "prefix": "exercises",
+      "title": "人工智能导论",
+      "type": "教材"
+    },
+    {
+      "prefix": "glossary",
+      "title": "人工智能导论",
+      "type": "教材"
+    },
+    {
+      "prefix": "projects",
+      "title": "人工智能导论",
+      "type": "教材"
+    }
+  ]
+}
