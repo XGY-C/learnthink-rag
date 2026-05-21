@@ -1,0 +1,20 @@
+{"query": "什么是贝叶斯分类器", "relevant_chunks": ["ch03_贝叶斯分类器#0", "ch03_贝叶斯分类器#1"], "difficulty": "easy"}
+{"query": "朴素贝叶斯算法的原理", "relevant_chunks": ["ch03_贝叶斯分类器#0", "ch03_贝叶斯分类器#1", "ch03_贝叶斯分类器#2"], "difficulty": "medium"}
+{"query": "搜索算法有哪些类型", "relevant_chunks": ["ch02_搜索算法#0", "ch02_搜索算法#1", "ch02_搜索算法#2"], "difficulty": "easy"}
+{"query": "A*算法的实现", "relevant_chunks": ["ch02_搜索算法#2", "ch02_搜索算法#3", "ch02_搜索算法#4"], "difficulty": "hard"}
+{"query": "人工智能绪论内容", "relevant_chunks": ["ch01_绪论#0", "ch01_绪论#1", "ch01_绪论#2"], "difficulty": "easy"}
+{"query": "什么是图灵测试", "relevant_chunks": ["ch01_绪论#0"], "difficulty": "easy"}
+{"query": "监督学习和无监督学习的区别", "relevant_chunks": ["ch01_绪论#3", "ch01_绪论#4"], "difficulty": "medium"}
+{"query": "广度优先搜索的特点", "relevant_chunks": ["ch02_搜索算法#1"], "difficulty": "medium"}
+{"query": "A*算法的启发函数", "relevant_chunks": ["ch02_搜索算法#2", "ch02_搜索算法#3"], "difficulty": "hard"}
+{"query": "Minimax算法用于什么场景", "relevant_chunks": ["ch02_搜索算法#3", "ch02_搜索算法#4"], "difficulty": "medium"}
+{"query": "贝叶斯定理的公式", "relevant_chunks": ["ch03_贝叶斯分类器#0"], "difficulty": "easy"}
+{"query": "什么是先验概率和后验概率", "relevant_chunks": ["ch03_贝叶斯分类器#0", "ch03_贝叶斯分类器#1"], "difficulty": "medium"}
+{"query": "高斯朴素贝叶斯适用场景", "relevant_chunks": ["ch03_贝叶斯分类器#2"], "difficulty": "medium"}
+{"query": "拉普拉斯平滑的作用", "relevant_chunks": ["ch03_贝叶斯分类器#2", "ch03_贝叶斯分类器#3"], "difficulty": "hard"}
+{"query": "贝叶斯网络是什么", "relevant_chunks": ["ch03_贝叶斯分类器#3"], "difficulty": "medium"}
+{"query": "深度学习的发展历程", "relevant_chunks": ["ch01_绪论#2"], "difficulty": "medium"}
+{"query": "强化学习的核心概念", "relevant_chunks": ["ch01_绪论#4"], "difficulty": "medium"}
+{"query": "Alpha-Beta剪枝优化了什么", "relevant_chunks": ["ch02_搜索算法#4"], "difficulty": "hard"}
+{"query": "SVM支持向量机的原理", "relevant_chunks": ["glossary_术语表#3"], "difficulty": "hard"}
+{"query": "K-Means聚类算法", "relevant_chunks": ["glossary_术语表#2"], "difficulty": "medium"}

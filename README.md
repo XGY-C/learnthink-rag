@@ -49,35 +49,76 @@ kb/
 
 ### 1) 安装依赖
 
-```bash
+> **⚠️ 重要提示**：如果项目路径包含空格（如 `LearnThink Companion`），在 CMD 中必须使用引号包裹路径。
+
+#### PowerShell
+```powershell
+# 创建虚拟环境
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1   # Windows
+
+# 激活虚拟环境
+.\.venv\Scripts\Activate.ps1
+
+# 安装依赖
+pip install -r requirements.txt
+```
+
+#### CMD (命令提示符)
+```cmd
+:: 创建虚拟环境
+python -m venv .venv
+
+:: 激活虚拟环境（如果路径有空格，先 cd 到项目目录）
+cd /d "D:\project_xgy\LearnThink Companion\learnthink-rag"
+.venv\Scripts\activate.bat
+
+:: 安装依赖
 pip install -r requirements.txt
 ```
 
 ### 2) 准备知识库
 
-```bash
+#### PowerShell
+```powershell
 # 把文档放到 kb/{course_id}/processed/ 下
 # 然后构建索引（Milvus 模式需先启动 Milvus）
 python scripts/build_index.py --course-id demo --mode milvus
 ```
 
+#### CMD
+```cmd
+:: 把文档放到 kb/{course_id}/processed/ 下
+:: 然后构建索引（Milvus 模式需先启动 Milvus）
+:: 如果路径有空格，确保已使用 cd /d 进入项目目录
+python scripts\build_index.py --course-id demo --mode milvus
+```
+
 ### 3) 启动服务
 
-```bash
+#### PowerShell
+```powershell
+uvicorn app.main:app --host 0.0.0.0 --port 19531 --reload
+```
+
+#### CMD
+```cmd
+:: 确保已在项目目录中，然后启动服务
 uvicorn app.main:app --host 0.0.0.0 --port 19531 --reload
 ```
 
 健康检查：`GET http://localhost:19531/healthz`
 检索接口：`POST http://localhost:19531/internal/rag/retrieve`
 
-示例请求：
+#### 示例请求（PowerShell）
+```powershell
+Invoke-RestMethod -Uri "http://localhost:19531/internal/rag/retrieve" -Method Post -ContentType "application/json" -Body '{"course_id":"demo","query":"贝叶斯 分类器 定义 例子","k":8}'
+```
 
-```bash
-curl -X POST http://localhost:19531/internal/rag/retrieve \
-  -H "Content-Type: application/json" \
-  -d '{"course_id":"demo","query":"贝叶斯 分类器 定义 例子","k":8}'
+#### 示例请求（CMD）
+```cmd
+curl -X POST http://localhost:19531/internal/rag/retrieve ^
+  -H "Content-Type: application/json" ^
+  -d "{\"course_id\":\"demo\",\"query\":\"贝叶斯 分类器 定义 例子\",\"k\":8}"
 ```
 
 ## 索引格式
@@ -104,11 +145,16 @@ curl -X POST http://localhost:19531/internal/rag/retrieve \
 | `dense` | 纯稠密（余弦相似度） | 纯语义理解 |
 | `sparse` | 纯稀疏（关键词内积） | 术语/公式精确匹配 |
 
-```bash
+```powershell
 # 混合检索（默认）
-curl -X POST http://localhost:19531/internal/rag/retrieve \
-  -H "Content-Type: application/json" \
-  -d '{"course_id":"demo","query":"贝叶斯分类器","k":8,"search_mode":"hybrid","sparse_weight":0.3}'
+Invoke-RestMethod -Uri "http://localhost:19531/internal/rag/retrieve" -Method Post -ContentType "application/json" -Body '{"course_id":"demo","query":"贝叶斯分类器","k":8,"search_mode":"hybrid","sparse_weight":0.3}'
+```
+
+```cmd
+:: 混合检索（默认）
+curl -X POST http://localhost:19531/internal/rag/retrieve ^
+  -H "Content-Type: application/json" ^
+  -d "{\"course_id\":\"demo\",\"query\":\"贝叶斯分类器\",\"k\":8,\"search_mode\":\"hybrid\",\"sparse_weight\":0.3}"
 ```
 
 ### 检索模式对比

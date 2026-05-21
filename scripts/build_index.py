@@ -382,6 +382,7 @@ def build_milvus(
     chunk_size: int,
     overlap: int,
     full_rebuild: bool = False,
+    progress_callback: callable = None,
 ) -> None:
     """Build Milvus collection from processed documents.
 
@@ -455,6 +456,8 @@ def build_milvus(
         )
     elif is_incremental and not files_to_process and not deleted_doc_ids:
         logger.info("No document changes detected. Skipping build.")
+        if progress_callback:
+            progress_callback(100, "文件无变化，无需重新构建")
         return
     else:
         # Full rebuild path
@@ -487,6 +490,12 @@ def build_milvus(
     batch_size = 5  # encode in smaller batches to see progress faster
     total_files = len(files_to_process)
     logger.info("Starting to process %d documents...", total_files)
+
+    if progress_callback:
+        if total_files > 0:
+            progress_callback(8, f"将处理 {total_files} 个文件")
+        else:
+            progress_callback(100, "没有文件需要处理，跳过")
 
     for file_idx, file_path in enumerate(files_to_process, 1):
         logger.info("Processing document %d/%d: %s", file_idx, total_files, file_path.name)
@@ -556,6 +565,10 @@ def build_milvus(
 
         logger.info("  Document %d/%d completed (%d chunks so far)", file_idx, total_files, chunk_id_counter)
 
+        if progress_callback and total_files > 0:
+            pct = 10 + (file_idx / total_files) * 75
+            progress_callback(pct, f"已编码 {file_idx}/{total_files}: {file_path.name}")
+
     if all_entities:
         # Insert in batches to avoid gRPC message size limits
         INSERT_BATCH = 500
@@ -567,6 +580,10 @@ def build_milvus(
             "Inserted %d chunks into Milvus collection (dense=%dd + sparse).",
             chunk_id_counter, DIM,
         )
+        if progress_callback:
+            progress_callback(92, f"已写入 {chunk_id_counter} 个文本块到向量数据库")
+    elif progress_callback:
+        progress_callback(92, "无新文本块需要写入")
 
     # Persist build manifest
     manifest = {
@@ -584,6 +601,9 @@ def build_milvus(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     logger.info("Build manifest written to %s", manifest_file)
+
+    if progress_callback:
+        progress_callback(100, "索引构建完成")
 
 
 # ---------------------------------------------------------------------------
