@@ -87,7 +87,8 @@ def ingest_document(req: IngestRequest) -> IngestResponse:
         task_id = start_ingest_task(
             course_id=req.course_id,
             doc_ids=req.doc_ids,
-            full_rebuild=req.full_rebuild
+            full_rebuild=req.full_rebuild,
+            file_urls=req.file_urls
         )
         
         return IngestResponse(
@@ -109,7 +110,8 @@ def ingest_document(req: IngestRequest) -> IngestResponse:
                 task_id=task_id,
                 course_id=req.course_id,
                 doc_ids=req.doc_ids,
-                full_rebuild=req.full_rebuild
+                full_rebuild=req.full_rebuild,
+                file_urls=req.file_urls
             )
             
             # 获取最终结果

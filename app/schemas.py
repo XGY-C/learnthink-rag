@@ -65,6 +65,7 @@ class IngestRequest(BaseModel):
     oss_prefix: str = Field(default="", description="OSS前缀，为空则使用默认路径")
     full_rebuild: bool = Field(default=False, description="是否全量重建索引")
     async_mode: bool = Field(default=True, description="是否异步执行（推荐true）")
+    file_urls: list[str] = Field(default_factory=list, description="文档OSS URL列表，RAG通过HTTP直接下载（无需OSS SDK）")
 
 
 class IngestResponse(BaseModel):

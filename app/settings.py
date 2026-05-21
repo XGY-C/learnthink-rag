@@ -30,5 +30,11 @@ class Settings(BaseSettings):
     search_mode: str = Field(default="hybrid", alias="SEARCH_MODE")  # dense | sparse | hybrid
     sparse_weight: float = Field(default=0.3, alias="SPARSE_WEIGHT")  # 稀疏权重，仅 hybrid 模式生效
 
+    # Alibaba Cloud OSS
+    oss_access_key: str = Field(default="", alias="OSS_ACCESS_KEY")
+    oss_secret_key: str = Field(default="", alias="OSS_SECRET_KEY")
+    oss_endpoint: str = Field(default="oss-cn-beijing.aliyuncs.com", alias="OSS_ENDPOINT")
+    oss_bucket_name: str = Field(default="learn-think", alias="OSS_BUCKET_NAME")
+
 
 settings = Settings()
