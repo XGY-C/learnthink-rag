@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,6 +21,11 @@ from app.log_config import setup_logger
 
 logger = setup_logger("learnthink-rag")
 
+# Concurrency control: limit simultaneous requests
+# Optimized for 8-core CPU without GPU: balances throughput and response time
+RETRIEVAL_SEMAPHORE = asyncio.Semaphore(10)  # Max 10 concurrent retrievals
+INGEST_SEMAPHORE = asyncio.Semaphore(2)      # Max 2 concurrent ingest tasks
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,6 +38,7 @@ async def lifespan(app: FastAPI):
         from app.reranker import warmup_reranker
         warmup_reranker()
         logger.info("learnthink-rag started, Milvus mode enabled with reranker")
+        logger.info(f"Concurrency limits: retrieval={RETRIEVAL_SEMAPHORE._value}, ingest={INGEST_SEMAPHORE._value}")
     except Exception as e:
         logger.error("learnthink-rag startup failed: %s", e)
         raise
@@ -67,72 +74,79 @@ def healthz() -> dict:
 
 
 @app.post("/admin/ingest-document", response_model=IngestResponse)
-def ingest_document(req: IngestRequest) -> IngestResponse:
+async def ingest_document(req: IngestRequest) -> IngestResponse:
     """
     Java端调用此接口：上传MD到OSS后，通知RAG服务下载并构建索引
     
     支持同步和异步两种模式：
     - async_mode=true（推荐）：立即返回task_id，通过 /admin/task/{task_id} 查询进度
     - async_mode=false：阻塞等待完成，直接返回结果（适合小文件）
+    
+    Concurrency limited to 3 simultaneous ingest tasks.
     """
     logger.info(
         "[Ingest] Received request: course_id=%s, doc_ids=%s, full_rebuild=%s, async=%s",
         req.course_id, req.doc_ids, req.full_rebuild, req.async_mode
     )
     
-    if req.async_mode:
-        # 异步模式：立即返回task_id
-        from app.task_executor import start_ingest_task
-        
-        task_id = start_ingest_task(
-            course_id=req.course_id,
-            doc_ids=req.doc_ids,
-            full_rebuild=req.full_rebuild,
-            file_urls=req.file_urls
-        )
-        
-        return IngestResponse(
-            status="accepted",
-            task_id=task_id,
-            course_id=req.course_id,
-            message=f"任务已提交，使用 task_id={task_id} 查询进度"
-        )
-    else:
-        # 同步模式：阻塞等待完成
-        import time
-        from app.task_executor import execute_ingest_task
-        from app.task_manager import task_manager, TaskStatus
-        
-        task_id = task_manager.create_task(req.course_id)
-        
-        try:
-            execute_ingest_task(
-                task_id=task_id,
+    # Acquire semaphore for ingest operations
+    await INGEST_SEMAPHORE.acquire()
+    try:
+        if req.async_mode:
+            # 异步模式：立即返回task_id
+            from app.task_executor import start_ingest_task
+            
+            task_id = start_ingest_task(
                 course_id=req.course_id,
                 doc_ids=req.doc_ids,
                 full_rebuild=req.full_rebuild,
                 file_urls=req.file_urls
             )
             
-            # 获取最终结果
-            result = task_manager.get_task(task_id)
+            return IngestResponse(
+                status="accepted",
+                task_id=task_id,
+                course_id=req.course_id,
+                message=f"任务已提交，使用 task_id={task_id} 查询进度"
+            )
+        else:
+            # 同步模式：阻塞等待完成
+            import time
+            from app.task_executor import execute_ingest_task
+            from app.task_manager import task_manager, TaskStatus
             
-            if result["status"] == TaskStatus.COMPLETED:
-                return IngestResponse(
-                    status="completed",
+            task_id = task_manager.create_task(req.course_id)
+            
+            try:
+                execute_ingest_task(
                     task_id=task_id,
                     course_id=req.course_id,
-                    message=result["message"]
+                    doc_ids=req.doc_ids,
+                    full_rebuild=req.full_rebuild,
+                    file_urls=req.file_urls
                 )
-            else:
-                raise Exception(result.get("error", "Unknown error"))
-        
-        except Exception as e:
-            logger.error(f"[Ingest] Sync mode failed: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Ingest failed: {str(e)[:200]}"
-            )
+                
+                # 获取最终结果
+                result = task_manager.get_task(task_id)
+                
+                if result["status"] == TaskStatus.COMPLETED:
+                    return IngestResponse(
+                        status="completed",
+                        task_id=task_id,
+                        course_id=req.course_id,
+                        message=result["message"]
+                    )
+                else:
+                    raise Exception(result.get("error", "Unknown error"))
+            
+            except Exception as e:
+                logger.error(f"[Ingest] Sync mode failed: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Ingest failed: {str(e)[:200]}"
+                )
+    finally:
+        INGEST_SEMAPHORE.release()
 
 
 @app.get("/admin/task/{task_id}", response_model=TaskProgress)
@@ -196,77 +210,103 @@ def get_stats() -> dict:
 
 
 @app.post("/internal/rag/retrieve", response_model=RetrieveResponse)
-def retrieve(req: RetrieveRequest) -> RetrieveResponse:
+async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
+    """
+    Retrieval endpoint with concurrency control.
+    
+    Supports up to 12 concurrent retrievals. Additional requests will queue
+    and wait for available slots. Requests waiting > 30s will timeout.
+    """
     t0 = time.time()
-
-    if not collection_exists(req.course_id):
+    
+    # Try to acquire semaphore with timeout
+    try:
+        await asyncio.wait_for(RETRIEVAL_SEMAPHORE.acquire(), timeout=30.0)
+    except asyncio.TimeoutError:
+        elapsed_ms = (time.time() - t0) * 1000
+        logger.warning("Retrieval request queued too long course=%s elapsed=%.0fms", req.course_id, elapsed_ms)
         raise HTTPException(
             status_code=503,
             detail={
-                "code": "KB_NOT_READY",
-                "message": "知识库未就绪：Milvus Collection 不存在或索引未建立",
+                "code": "SERVICE_BUSY",
+                "message": "服务繁忙，请稍后重试",
                 "course_id": req.course_id,
-                "extra": {},
+                "extra": {"queue_timeout_ms": 30000},
             },
         )
+    
     try:
-        sources = milvus_retrieve(
-            course_id=req.course_id,
-            query=req.query,
+        if not collection_exists(req.course_id):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "KB_NOT_READY",
+                    "message": "知识库未就绪：Milvus Collection 不存在或索引未建立",
+                    "course_id": req.course_id,
+                    "extra": {},
+                },
+            )
+        try:
+            sources = milvus_retrieve(
+                course_id=req.course_id,
+                query=req.query,
+                k=req.k,
+                topic=req.topic,
+                search_mode=req.search_mode,
+                alpha=1.0 - req.sparse_weight,
+            )
+            
+            # Apply min_relevance filter as per API contract
+            if req.min_relevance > 0:
+                filtered_sources = [s for s in sources if s['relevance'] >= req.min_relevance]
+                if len(filtered_sources) < len(sources):
+                    logger.info(
+                        "Filtered %d sources by min_relevance=%.2f, %d remaining",
+                        len(sources), req.min_relevance, len(filtered_sources)
+                    )
+                sources = filtered_sources
+        except TimeoutError as e:
+            elapsed_ms = (time.time() - t0) * 1000
+            logger.error("retrieval timeout course=%s elapsed=%.0fms", req.course_id, elapsed_ms)
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "code": "RETRIEVAL_TIMEOUT",
+                    "message": "检索超时，请稍后重试",
+                    "course_id": req.course_id,
+                    "extra": {"timeout_ms": 2000},
+                },
+            )
+        except Exception as e:
+            elapsed_ms = (time.time() - t0) * 1000
+            logger.error("milvus error course=%s: %s", req.course_id, e)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "MILVUS_ERROR",
+                    "message": f"Milvus 检索异常: {str(e)[:200]}",
+                    "course_id": req.course_id,
+                    "extra": {"error": str(e)[:200]},
+                },
+            )
+
+        stats = RetrieveStats(
             k=req.k,
-            topic=req.topic,
+            returned=len(sources),
+            min_relevance=req.min_relevance,
+            min_sources=req.min_sources,
+            query_mode=req.query_mode,
             search_mode=req.search_mode,
-            alpha=1.0 - req.sparse_weight,
+            deduped=True,
         )
-        
-        # Apply min_relevance filter as per API contract
-        if req.min_relevance > 0:
-            filtered_sources = [s for s in sources if s['relevance'] >= req.min_relevance]
-            if len(filtered_sources) < len(sources):
-                logger.info(
-                    "Filtered %d sources by min_relevance=%.2f, %d remaining",
-                    len(sources), req.min_relevance, len(filtered_sources)
-                )
-            sources = filtered_sources
-    except TimeoutError as e:
+
         elapsed_ms = (time.time() - t0) * 1000
-        logger.error("retrieval timeout course=%s elapsed=%.0fms", req.course_id, elapsed_ms)
-        raise HTTPException(
-            status_code=504,
-            detail={
-                "code": "RETRIEVAL_TIMEOUT",
-                "message": "检索超时，请稍后重试",
-                "course_id": req.course_id,
-                "extra": {"timeout_ms": 2000},
-            },
-        )
-    except Exception as e:
-        elapsed_ms = (time.time() - t0) * 1000
-        logger.error("milvus error course=%s: %s", req.course_id, e)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "code": "MILVUS_ERROR",
-                "message": f"Milvus 检索异常: {str(e)[:200]}",
-                "course_id": req.course_id,
-                "extra": {"error": str(e)[:200]},
-            },
+        logger.info(
+            "retrieve done course=%s k=%d returned=%d search_mode=%s query_mode=%s elapsed=%.0fms",
+            req.course_id, req.k, len(sources), req.search_mode, req.query_mode, elapsed_ms,
         )
 
-    stats = RetrieveStats(
-        k=req.k,
-        returned=len(sources),
-        min_relevance=req.min_relevance,
-        min_sources=req.min_sources,
-        query_mode=req.query_mode,
-        search_mode=req.search_mode,
-        deduped=True,
-    )
-
-    elapsed_ms = (time.time() - t0) * 1000
-    logger.info(
-        "retrieve done course=%s k=%d returned=%d search_mode=%s query_mode=%s elapsed=%.0fms",
-        req.course_id, req.k, len(sources), req.search_mode, req.query_mode, elapsed_ms,
-    )
-
-    return RetrieveResponse(sources=sources, stats=stats)
+        return RetrieveResponse(sources=sources, stats=stats)
+    
+    finally:
+        RETRIEVAL_SEMAPHORE.release()

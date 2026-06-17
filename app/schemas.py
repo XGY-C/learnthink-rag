@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class RetrieveRequest(BaseModel):
     course_id: str = Field(min_length=1)
     query: str = Field(min_length=1)
-    k: int = Field(default=8, ge=1, le=50)
+    k: int = Field(default=200, ge=1, le=200)
     topic: str | None = None
 
     # ---- 以下阈值字段由调用方（Java RetrieverAgent）消费，RAG 服务不做过滤 ----
