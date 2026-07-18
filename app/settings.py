@@ -20,11 +20,19 @@ class Settings(BaseSettings):
     milvus_host: str = Field(default="localhost", alias="MILVUS_HOST")
     milvus_port: int = Field(default=19530, alias="MILVUS_PORT")
     milvus_db: str = Field(default="learnthink", alias="MILVUS_DB")
+    milvus_user: str = Field(default="root", alias="MILVUS_USER")
+    milvus_password: str = Field(default="", alias="MILVUS_PASSWORD")
 
     # Embedding
     embedding_model: str = Field(default="BAAI/bge-m3", alias="EMBEDDING_MODEL")
     embedding_device: str = Field(default="cpu", alias="EMBEDDING_DEVICE")
     embedding_cache_dir: str = Field(default="./models", alias="EMBEDDING_CACHE_DIR")
+
+    # Reranker
+    reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", alias="RERANKER_MODEL")
+
+    # HuggingFace mirror (国内网络推荐配置 https://hf-mirror.com)
+    hf_endpoint: str | None = Field(default=None, alias="HF_ENDPOINT")
 
     # Hybrid search
     search_mode: str = Field(default="hybrid", alias="SEARCH_MODE")  # dense | sparse | hybrid

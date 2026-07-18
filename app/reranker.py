@@ -9,6 +9,8 @@ import logging
 import threading
 from typing import Any
 
+from app.settings import settings
+
 logger = logging.getLogger(__name__)
 
 # Global state with thread-safe initialization
@@ -34,12 +36,12 @@ def _load_reranker():
         
         try:
             from FlagEmbedding import FlagReranker
-            from pathlib import Path
-            
-            # Use local model path to avoid network issues
-            model_path = str(Path("./models/models--BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e").resolve())
-            
-            logger.info("Loading BGE-Reranker-v2-m3 model from local path: %s", model_path)
+            from app.model_loader import resolve_model_path
+
+            # 本地有缓存则直接用，否则从 HuggingFace Hub 自动下载到 ./models/
+            model_path = resolve_model_path(settings.reranker_model)
+
+            logger.info("Loading BGE-Reranker-v2-m3 model from: %s", model_path)
             _reranker_model = FlagReranker(
                 model_path,
                 use_fp16=True,  # Use FP16 for faster inference

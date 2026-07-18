@@ -440,7 +440,12 @@ def build_milvus(
     client_uri = settings.milvus_uri or f"http://{settings.milvus_host}:{settings.milvus_port}"
     if not settings.milvus_uri and settings.milvus_db:
         client_uri += f"/{settings.milvus_db}"
-    client = MilvusClient(uri=client_uri)
+    client_kwargs = {"uri": client_uri}
+    if settings.milvus_user:
+        client_kwargs["user"] = settings.milvus_user
+    if settings.milvus_password:
+        client_kwargs["password"] = settings.milvus_password
+    client = MilvusClient(**client_kwargs)
     col_name = _collection_name(course_id)
 
     is_incremental = (

@@ -55,12 +55,17 @@ def connect() -> None:
                 else:
                     # Connect to Milvus Standalone
                     # Note: Database will be auto-created on first use in Milvus 2.4+
-                    connections.connect(
-                        alias="default",
-                        host=settings.milvus_host,
-                        port=settings.milvus_port,
-                        db_name=settings.milvus_db if settings.milvus_db else "default",
-                    )
+                    kwargs = {
+                        "alias": "default",
+                        "host": settings.milvus_host,
+                        "port": settings.milvus_port,
+                        "db_name": settings.milvus_db if settings.milvus_db else "default",
+                    }
+                    if settings.milvus_user:
+                        kwargs["user"] = settings.milvus_user
+                    if settings.milvus_password:
+                        kwargs["password"] = settings.milvus_password
+                    connections.connect(**kwargs)
                     _connected = True
                     logger.info(
                         "Milvus connected: %s:%s/%s",
@@ -134,7 +139,12 @@ def collection_exists(course_id: str) -> bool:
     # Add db_name to URI if using Milvus Standalone
     if not settings.milvus_uri and settings.milvus_db:
         client_uri += f"/{settings.milvus_db}"
-    client = MilvusClient(uri=client_uri)
+    client_kwargs = {"uri": client_uri}
+    if settings.milvus_user:
+        client_kwargs["user"] = settings.milvus_user
+    if settings.milvus_password:
+        client_kwargs["password"] = settings.milvus_password
+    client = MilvusClient(**client_kwargs)
     return client.has_collection(_collection_name(course_id))
 
 

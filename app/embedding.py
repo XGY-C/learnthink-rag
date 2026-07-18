@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import threading
 from functools import lru_cache
-from pathlib import Path
 
 from app.settings import settings
 
@@ -30,11 +29,12 @@ def _load_model():
             return _model
 
         from FlagEmbedding import BGEM3FlagModel
+        from app.model_loader import resolve_model_path
 
-        # Use local model path to avoid network issues
-        model_path = str(Path(settings.embedding_cache_dir).resolve() / "models--BAAI--bge-m3" / "snapshots" / "5617a9f61b028005a4858fdac845db406aefb181")
-        
-        logger.info("Loading embedding model from local path: %s (device=%s)...", model_path, settings.embedding_device)
+        # 本地有缓存则直接用，否则从 HuggingFace Hub 自动下载到 ./models/
+        model_path = resolve_model_path(settings.embedding_model)
+
+        logger.info("Loading embedding model from: %s (device=%s)...", model_path, settings.embedding_device)
         _model = BGEM3FlagModel(
             model_path,
             use_fp16=settings.embedding_device != "cpu",
